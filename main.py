@@ -6,7 +6,12 @@ import os
 
 def fetch_image_urls(url):
     print(f"[+] Fetching image URLs from {url}...")
-    response = requests.get(url)
+    try:
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"[!] Failed to fetch page: {e}")
+        return []
     soup = BeautifulSoup(response.content, 'html.parser')
     img_tags = soup.find_all('img')
     img_urls = []
@@ -27,13 +32,20 @@ def fetch_image_urls(url):
     
     return img_urls
 
-def download_images(img_urls):
+def download_images(img_urls, images_folder="images"):
     images = []
     print(f"[+] Downloading {len(img_urls)} images...")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
+    
+    # Create images folder if it doesn't exist
+    try:
+        os.makedirs(images_folder, exist_ok=True)
+    except Exception as e:
+        print(f"[!] Failed to create images folder: {e}")
+        return images
     
     for idx, url in enumerate(img_urls):
         try:
@@ -49,11 +61,21 @@ def download_images(img_urls):
             # Skip very small images by dimensions
             if img.width < 100 or img.height < 100:
                 continue
-                
+            
+            # Save image to images folder
+            img_filename = os.path.join(images_folder, f"image_{idx+1:03d}.jpg")
+            try:
+                img.save(img_filename, "JPEG", quality=90)
+            except Exception as e:
+                print(f"  ! Failed to save image {img_filename}: {e}")
+                continue
+            
             images.append(img)
-            print(f"  - Downloaded image {idx+1}/{len(img_urls)} ({img.width}x{img.height})")
-        except Exception as e:
+            print(f"  - Downloaded and saved image {idx+1}/{len(img_urls)} ({img.width}x{img.height})")
+        except requests.RequestException as e:
             print(f"  ! Failed to download {url}: {e}")
+        except Exception as e:
+            print(f"  ! Error processing image from {url}: {e}")
     
     return images
 
@@ -63,7 +85,7 @@ def create_pdf_pages(images, max_height=60000):
     pages = []
     current_page_images = []
     current_height = 0
-    max_width = max(img.width for img in images) if images else 800
+    max_width = max((img.width for img in images), default=800)
     
     for img in images:
         # If adding this image would exceed the limit, create a new page
@@ -123,12 +145,16 @@ def save_as_pdf(pages, output_file):
         print("[+] Saving as individual images instead...")
         base_name = output_file.replace('.pdf', '')
         for i, page in enumerate(pages):
-            page.save(f"{base_name}_page_{i+1}.png", "PNG")
+            try:
+                page.save(f"{base_name}_page_{i+1}.png", "PNG")
+            except Exception as img_e:
+                print(f"[!] Failed to save fallback image {i+1}: {img_e}")
         print(f"[✓] Saved {len(pages)} individual PNG files")
 
 def main():
     chapter_url = "https://www.sololevelingmangafree.com/manga/solo-leveling-chapter-148/index.html"
     output_pdf = "Solo_Leveling_Chapter_148.pdf"
+    images_folder = "images"
     
     try:
         img_urls = fetch_image_urls(chapter_url)
@@ -138,13 +164,13 @@ def main():
             print("[!] No image URLs found. The website structure might have changed.")
             return
         
-        images = download_images(img_urls)
+        images = download_images(img_urls, images_folder=images_folder)
         
         if not images:
             print("[!] No images were downloaded. Aborting.")
             return
         
-        print(f"[+] Successfully downloaded {len(images)} images")
+        print(f"[+] Successfully downloaded and saved {len(images)} images")
         
         pages = create_pdf_pages(images)
         save_as_pdf(pages, output_pdf)
